@@ -5,11 +5,19 @@ package jp.bananafish.spark.sample;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Reader;
+import java.io.Writer;
+import java.util.List;
 
 import net.lingala.zip4j.core.ZipFile;
 import net.lingala.zip4j.exception.ZipException;
@@ -28,6 +36,7 @@ import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.api.java.function.Function;
 import org.apache.spark.sql.api.java.JavaSQLContext;
 import org.apache.spark.sql.api.java.JavaSchemaRDD;
+import org.apache.spark.sql.api.java.Row;
 
 /**
  * @author border
@@ -54,6 +63,7 @@ public class PostalCodeCsv {
                         // CSVをばらしてフィールドにセット。手抜きです。
                         String[] fields = line.split(",");
                         Address address = new Address();
+                        address.setJisCode(fields[0]); // JISコード
                         address.setPostalCode(fields[2]); // 郵便番号
                         address.setPrefectureName(fields[6]); // 都道府県名
                         return address;
@@ -63,9 +73,22 @@ public class PostalCodeCsv {
         // クエリ準備
         JavaSQLContext sqlContext = new JavaSQLContext(sc);
         JavaSchemaRDD table = sqlContext.applySchema(rddRecords, Address.class);
-        table.registerAsTable("address_table");
+        table.registerTempTable("address_table");
         table.printSchema();
+        JavaSchemaRDD res = sqlContext.sql(//
+                "select prefectureName,count(prefectureName)" //
+                        + "from address_table " //
+                        + "group by prefectureName " //
+                        + "order by prefectureName " //
+                );
         // 後始末
+        List<Row> list = res.collect();
+        for (Row row : list) {
+            int i = 0;
+            String prefectureName = row.getString(i++);
+            long count = row.getLong(i++);
+            System.out.println(String.format("%s : %d", prefectureName, count));
+        }
         try {
             FileUtils.forceDeleteOnExit(inputFile);
         } catch (IOException e) {
@@ -85,20 +108,20 @@ public class PostalCodeCsv {
         HttpClient httpClient = new HttpClient();
         HttpMethod httpMethod = new GetMethod(
                 "http://www.post.japanpost.jp/zipcode/dl/kogaki/zip/ken_all.zip");
-        InputStream inputStream = null;
-        OutputStream outputStream = null;
+        Reader reader = null;
+        Writer writer = null;
         try {
             // データ取得
             int statusCode = httpClient.executeMethod(httpMethod);
             if (statusCode != HttpStatus.SC_OK) {
                 throw new RuntimeException("");
             }
-            inputStream = new BufferedInputStream(
+            InputStream inputStream = new BufferedInputStream(
                     httpMethod.getResponseBodyAsStream());
 
             // ZIPファイル保存
             file = new File(destinationPath, "ken_all.zip");
-            outputStream = new BufferedOutputStream(new FileOutputStream(file));
+            OutputStream outputStream = new BufferedOutputStream(new FileOutputStream(file));
             IOUtils.copyLarge(inputStream, outputStream);
             IOUtils.closeQuietly(inputStream);
             IOUtils.closeQuietly(outputStream);
@@ -111,6 +134,15 @@ public class PostalCodeCsv {
             if (!file.exists()) {
                 throw new IOException("Received file not found");
             }
+
+            // ファイルのエンコーディングをUTF-8に変換
+            file = new File(destinationPath, "ken_all.csv");
+            inputStream = new FileInputStream(file);
+            reader = new BufferedReader(new InputStreamReader(inputStream, "MS932"));
+            file = new File(destinationPath, "ken_all_utf8.csv");
+            outputStream = new FileOutputStream(file);
+            writer = new BufferedWriter(new OutputStreamWriter(outputStream, "UTF8"));
+            IOUtils.copyLarge(reader, writer);
         } catch (HttpException e) {
             throw new RuntimeException(e);
         } catch (IOException e) {
@@ -118,8 +150,8 @@ public class PostalCodeCsv {
         } catch (ZipException e) {
             throw new RuntimeException(e);
         } finally {
-            IOUtils.closeQuietly(inputStream);
-            IOUtils.closeQuietly(outputStream);
+            IOUtils.closeQuietly(reader);
+            IOUtils.closeQuietly(writer);
         }
         return file;
     }
