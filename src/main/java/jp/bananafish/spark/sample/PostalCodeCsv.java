@@ -137,6 +137,7 @@ public class PostalCodeCsv {
 
             // ファイルのエンコーディングをUTF-8に変換
             file = new File(destinationPath, "ken_all.csv");
+            FileUtils.forceDeleteOnExit(file);
             inputStream = new FileInputStream(file);
             reader = new BufferedReader(new InputStreamReader(inputStream, "MS932"));
             file = new File(destinationPath, "ken_all_utf8.csv");
